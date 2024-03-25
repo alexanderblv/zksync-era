@@ -26,7 +26,8 @@ jobs:
       zk_environment_cuda_12_0: ${{ steps.changed-files-yaml.outputs.zk_env_cuda_12_any_changed }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c # v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
           submodules: "recursive"
 
@@ -52,9 +53,6 @@ jobs:
     outputs:
       short_sha: ${{ steps.set_short_sha.outputs.short_sha }}
     steps:
-      - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c
-        with:
-          submodules: "recursive"
       - name: Set short SHA
         id: set_short_sha
         run: echo "short_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
@@ -63,6 +61,7 @@ jobs:
     if: needs.changed_files.outputs.zk_environment == 'true'
     needs: [changed_files, get_short_sha]
     name: Build and optionally push zk-environment Docker images to Docker Hub
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
@@ -71,29 +70,33 @@ jobs:
             arch: amd64
           - runner: matterlabs-ci-runner-arm
             arch: arm64
-    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
           submodules: "recursive"
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f03ac48505955848960e80bbb68046aa35c7b9e7 # v2
+        uses: docker/setup-buildx-action@v2
+
       - name: Log in to Docker Hub
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a # v2.1.0
+        uses: docker/login-action@v2.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Build and optionally push zk-environment lightweight
-        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        uses: docker/build-push-action@v3
         with:
           file: docker/zk-environment/Dockerfile
           target: rust-lightweight
           tags: "matterlabs/zk-environment:${{ needs.get_short_sha.outputs.short_sha }}-lightweight-${{ matrix.arch }}"
           build-args: ARCH=${{ matrix.arch }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
       - name: Build and optionally push zk-environment lightweight Rust nightly
-        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        uses: docker/build-push-action@v3
         with:
           file: docker/zk-environment/Dockerfile
           target: rust-lightweight-nightly
@@ -107,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Login to DockerHub
-        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a # v2.1.0
+        uses: docker/login-action@v2.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -146,7 +149,7 @@ jobs:
 
       - name: Checkout code
         if: steps.condition.outputs.should_run == 'true'
-        uses: actions/checkout@ac593985615ec2ede58e132d2e21d2b1cbd6127c
+        uses: actions/checkout@v3
         with:
           submodules: "recursive"
 
@@ -156,7 +159,7 @@ jobs:
           gcloud auth print-access-token --lifetime=7200 --impersonate-service-account=gha-ci-runners@matterlabs-infra.iam.gserviceaccount.com | docker login -u oauth2accesstoken --password-stdin https://us-docker.pkg.dev
 
       - name: Log in to Docker Hub
-        if: steps.condition.outputs.should_run == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: steps.condition.outputs.should_run == 'true' && github.event_name == 'push' && github.ref == '
         uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
           username: ${{ secrets.DOCKERHUB_USER }}
