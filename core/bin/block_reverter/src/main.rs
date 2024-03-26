@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use tokio::io::{self, AsyncReadExt};
 use zksync_config::{
@@ -12,6 +12,7 @@ use zksync_dal::{ConnectionPool, Core};
 use zksync_env_config::FromEnv;
 use zksync_types::{L1BatchNumber, U256};
 
+// Define command line interface structure using clap
 #[derive(Debug, Parser)]
 #[command(author = "Matter Labs", version, about = "Block revert utility", long_about = None)]
 struct Cli {
@@ -19,6 +20,7 @@ struct Cli {
     command: Command,
 }
 
+// Define available commands as subcommands
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Displays suggested values to use.
@@ -70,9 +72,10 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
+    // Set up observability configuration
     let observability_config =
-        ObservabilityConfig::from_env().context("ObservabilityConfig::from_env()")?;
+        ObservabilityConfig::from_env().context("Failed to get observability configuration")?;
     let log_format: vlog::LogFormat = observability_config
         .log_format
         .parse()
@@ -87,22 +90,24 @@ async fn main() -> anyhow::Result<()> {
     }
     let _guard = builder.build();
 
-    let eth_sender = ETHSenderConfig::from_env().context("ETHSenderConfig::from_env()")?;
-    let db_config = DBConfig::from_env().context("DBConfig::from_env()")?;
-    let eth_client = ETHClientConfig::from_env().context("ETHClientConfig::from_env()")?;
+    // Load necessary configurations
+    let eth_sender = ETHSenderConfig::from_env().context("Failed to get ETH sender configuration")?;
+    let db_config = DBConfig::from_env().context("Failed to get DB configuration")?;
+    let eth_client = ETHClientConfig::from_env().context("Failed to get ETH client configuration")?;
     let default_priority_fee_per_gas =
         U256::from(eth_sender.gas_adjuster.default_priority_fee_per_gas);
-    let contracts = ContractsConfig::from_env().context("ContractsConfig::from_env()")?;
-    let postgres_config = PostgresConfig::from_env().context("PostgresConfig::from_env()")?;
+    let contracts = ContractsConfig::from_env().context("Failed to get contracts configuration")?;
+    let postgres_config = PostgresConfig::from_env().context("Failed to get Postgres configuration")?;
     let config = BlockReverterEthConfig::new(eth_sender, contracts, eth_client.web3_url.clone());
 
+    // Set up database connection pool
     let connection_pool = ConnectionPool::<Core>::builder(
         postgres_config.master_url()?,
         postgres_config.max_connections()?,
     )
     .build()
     .await
-    .context("failed to build a connection pool")?;
+    .context("Failed to build a connection pool")?;
     let mut block_reverter = BlockReverter::new(
         NodeRole::Main,
         db_config.state_keeper_db_path,
@@ -112,11 +117,12 @@ async fn main() -> anyhow::Result<()> {
         L1ExecutedBatchesRevert::Disallowed,
     );
 
+    // Parse command-line arguments and execute corresponding command
     match Cli::parse().command {
         Command::Display { json } => {
             let suggested_values = block_reverter.suggested_values().await;
             if json {
-                println!("{}", serde_json::to_string(&suggested_values).unwrap());
+                println!("{}", serde_json::to_string(&suggested_values)?);
             } else {
                 println!("Suggested values for rollback: {:#?}", suggested_values);
             }
@@ -134,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
                     priority_fee_per_gas,
                     nonce,
                 )
-                .await
+                .await?
         }
         Command::RollbackDB {
             l1_batch_number,
@@ -144,29 +150,28 @@ async fn main() -> anyhow::Result<()> {
             allow_executed_block_reversion,
         } => {
             if !rollback_tree && rollback_postgres {
-                println!("You want to rollback Postgres DB without rolling back tree.");
-                println!(
-                    "If tree is not yet rolled back to this block then the only way \
-                     to make it synced with Postgres will be to completely rebuild it."
-                );
+                println!("Warning: You are attempting to rollback Postgres DB without rolling back the tree.");
+                println!("If the tree is not yet rolled back to this block, the only way to sync it with Postgres will be to completely rebuild it.");
                 println!("Are you sure? Print y/n");
 
                 let mut input = [0u8];
-                io::stdin().read_exact(&mut input).await.unwrap();
+                io::stdin().read_exact(&mut input).await?;
                 if input[0] != b'y' && input[0] != b'Y' {
-                    std::process::exit(0);
+                    println!("Rollback aborted.");
+                    return Ok(());
                 }
             }
 
             if allow_executed_block_reversion {
-                println!("You want to revert already executed blocks. It's impossible to restore them for the main node");
-                println!("Make sure you are doing it ONLY for external node");
+                println!("Warning: You are attempting to revert already executed blocks. This is impossible to restore for the main node.");
+                println!("Make sure you are doing it ONLY for an external node.");
                 println!("Are you sure? Print y/n");
 
                 let mut input = [0u8];
-                io::stdin().read_exact(&mut input).await.unwrap();
+                io::stdin().read_exact(&mut input).await?;
                 if input[0] != b'y' && input[0] != b'Y' {
-                    std::process::exit(0);
+                    println!("Rollback aborted.");
+                    return Ok(());
                 }
                 block_reverter.change_rollback_executed_l1_batches_allowance(
                     L1ExecutedBatchesRevert::Allowed,
@@ -186,9 +191,10 @@ async fn main() -> anyhow::Result<()> {
 
             block_reverter
                 .rollback_db(L1BatchNumber(l1_batch_number), flags)
-                .await
+                .await?
         }
-        Command::ClearFailedL1Transactions => block_reverter.clear_failed_l1_transactions().await,
+        Command::ClearFailedL1Transactions => block_reverter.clear_failed_l1_transactions().await?,
     }
     Ok(())
 }
+
